@@ -47,13 +47,25 @@ class GraspPlannerNode():
 
         # We can get a list of all the groups in the robot:
         group_names = self.robot.get_group_names()
-        print("============ Available Planning Groups:", self.robot.get_group_names())
+        print("============ Available Planning Groups:", group_names)
 
         # Sometimes for debugging it is useful to print the entire state of the
         # robot:
         print("============ Printing robot state")
         print(self.robot.get_current_state())
-        print("")
+
+        print("============ Printing active joints in arm group")
+        print(self.arm_group.get_active_joints())
+
+        print("============ Printing joints in arm group")
+        print(self.arm_group.get_joints())
+
+        print("============ Printing active joints in gripper group")
+        print(self.gripper_group.get_active_joints())
+
+        print("============ Printing joints in gripper group")
+        print(self.gripper_group.get_joints())
+        # breakpoint()
 
     
     def start(self):
@@ -225,6 +237,11 @@ class GraspPlannerNode():
         Grasp object based on object detection.
         """
 
+        # self.target_pos.position.z += 0.05
+        # self.target_pos.position.x += 0.125
+        # self.target_pos.position.y -= 0.2
+        self.target_pos.position.x += 0.1
+        self.target_pos.position.y -= 0.15
         self.arm_group.set_pose_target(self.target_pos)
         self.arm_group.go()
         # self.plan_cartesian_path(self.target_pos)
@@ -284,16 +301,23 @@ class GraspPlannerNode():
 
     def gripper_move(self, width):
         joint_state_msg = rospy.wait_for_message("/my_gen3_lite/joint_states", JointState, timeout=1.0)
-        print("joint_state_msg: ", joint_state_msg)
+        # print("joint_state_msg: ", joint_state_msg)
 
         # Find indices of the gripper joints
-        right_finger_index = joint_state_msg.name.index('right_finger_bottom_joint')
-        left_finger_index = joint_state_msg.name.index('left_finger_bottom_joint')
+        right_finger_bottom_index = joint_state_msg.name.index('right_finger_bottom_joint')
+        print("right finger bottom index: ", right_finger_bottom_index)
 
-        # Set desired width for both gripper fingers
-        gripper_joints_state = list(joint_state_msg.position)
-        gripper_joints_state[right_finger_index] = width
-        gripper_joints_state[left_finger_index] = width
+        # joint_pos = joint_state_msg.position
+        # joint_pos = list(joint_pos)
+        # print("joint_pos: ", joint_pos)
+        # joint_pos[right_finger_bottom_index] = width
+        # joint_pos = joint_pos[:6]
+
+        # self.gripper_group.set_joint_value_target([width])
+        self.gripper_group.set_joint_value_target({
+                "right_finger_bottom_joint": width})
+
+        self.gripper_group.go()
 
  
     def execute_grasp_sequence(self):
