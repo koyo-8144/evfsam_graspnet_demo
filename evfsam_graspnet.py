@@ -93,7 +93,7 @@ class EVFsamGraspnet():
         # self.load_in_4bit = False
         # self.model_type = "ori" # "ori", "effi", "sam2"
         # self.image_path = "assets/zebra.jpg"
-        self.prompt = "pick a red cup"
+        self.prompt = "pick up a potate chips box"
 
         self.image_w = 1280
         self.image_h = 720
@@ -101,7 +101,7 @@ class EVFsamGraspnet():
         self.image_file_save_dir = "image_files"
  
         self.display_count = 0
-        self.display_itr = 3
+        self.display_itr = 5
  
         self.gg_file_path = '/home/chart-admin/koyo_ws/langsam_grasp_ws/src/demo_pkg_v2/src/data/gg_values.txt'
  

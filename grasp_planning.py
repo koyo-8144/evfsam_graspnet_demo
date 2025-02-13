@@ -11,6 +11,7 @@ from sensor_msgs.msg import  JointState
 class GraspPlannerNode():
     def __init__(self):
         self.filepath = "/home/chart-admin/koyo_ws/langsam_grasp_ws/src/demo_pkg_v2/src/data/gg_values.txt"
+        # self.filepath = "/home/ubuntu/catkin_workspace/src/demo_pkg/data/gg_values.txt"
         self.listener = tf.TransformListener()
         self._rate = rospy.Rate(10)  # Broadcast at 10 Hz
 
@@ -73,7 +74,7 @@ class GraspPlannerNode():
         self.process_graspnet_output()
         rospy.loginfo("Starting grasp planning...")
         rospy.loginfo("Moving to start position")
-        # self.go_sp()
+        self.go_sp()
         self.execute_grasp_sequence()
 
 
@@ -156,8 +157,18 @@ class GraspPlannerNode():
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 continue
 
-            self._rate.sleep()
         return trans_base_camera, rot_base_camera
+    
+    def get_camera_ee(self):
+        while not rospy.is_shutdown():
+            try:
+                # Get transformation from base_link to end_effector_link
+                (trans_camera_ee, rot_camera_ee) = self.listener.lookupTransform('/d435_depth_optical_frame', '/tool_frame', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+
+        return trans_camera_ee, rot_camera_ee
 
     def transformation_to_pose(self, T_base_obj):
         # Extract translation (position)
@@ -201,28 +212,52 @@ class GraspPlannerNode():
         trans_grasp = poses["translation"]
         rot_grasp = poses["rotation"]
         T_grasp_obj = self.construct_homogeneous_transform(trans_grasp, rot_grasp)
-        print("Transformation Matrix (grasp to obj): ", T_grasp_obj)
+        print("Transformation Matrix (grasp to obj):")
+        print(T_grasp_obj)
 
         trans_zero = np.zeros(3)
         rot_z_90 = self.rotation_matrix_z(90)
         T_camera_grasp = self.construct_homogeneous_transform(trans_zero, rot_z_90)
-        print("Transformation Matrix (camera to grasp): ", T_camera_grasp)
+        print("Transformation Matrix (camera to grasp):")
+        print(T_camera_grasp)
         
         T_camera_obj = T_camera_grasp @ T_grasp_obj
-        print("Transformation Matrix (camera to obj): ", T_camera_obj)
+        print("Transformation Matrix (camera to obj):")
+        print(T_camera_obj)
         
         trans_base_camera, rot_base_camera = self.get_base_camera()
         T_base_camera = self.construct_rot_matrix_homogeneous_transform(trans_base_camera, rot_base_camera)
-        print("Transformation Matrix (base to camera): ", T_base_camera)
+        print("Transformation Matrix (base to camera):")
+        print(T_base_camera)
         
         T_base_obj = T_base_camera @ T_camera_obj
-        print("Transformation Matrix (base to obj): ", T_base_obj)
+        print("Transformation Matrix (base to obj):")
+        print(T_base_obj)
+
+        # T_base_obj_C = T_base_obj
+        # print("GraspNet output (grasp pose) corresponds to robot's camera position -> this Transformation Matrix (base to obj) needs additional transformation", T_base_obj_C)
+        # trans_camera_ee, rot_camera_ee = self.get_camera_ee()
+        # print("Transition (camera to ee):")
+        # print(trans_camera_ee)
+        # print("Rotation (camera to ee):")
+        # print(rot_camera_ee)
+        # T_camera_ee = self.construct_rot_matrix_homogeneous_transform(trans_camera_ee, rot_camera_ee)
+        # print("Transformation Matrix (camera to ee):")
+        # print(T_camera_ee)
+        # T_base_obj_EE = T_base_obj_C @ T_camera_ee
+        # print("Transformation Matrix (base to obj) for EE:")
+        # print(T_base_obj_EE)
+
 
         self.target_pos = self.transformation_to_pose(T_base_obj)
+        # self.target_pos = self.transformation_to_pose(T_base_obj_EE)
         print("Target Pose: ", self.target_pos)
 
         self.gripper_width = self.read_gripper_width(self.filepath)
         print("Gripper Width: ", self.gripper_width)
+
+        # breakpoint()
+
 
     ####### Grasp Planning #######
 
@@ -240,14 +275,16 @@ class GraspPlannerNode():
         # self.target_pos.position.z += 0.05
         # self.target_pos.position.x += 0.125
         # self.target_pos.position.y -= 0.2
-        self.target_pos.position.x += 0.1
-        self.target_pos.position.y -= 0.15
+        # self.target_pos.position.x += 0.1
+        # self.target_pos.position.y -= 0.15
+        # self.target_pos.position.x += 0.075
+        # self.target_pos.position.y += 0.075
         self.arm_group.set_pose_target(self.target_pos)
         self.arm_group.go()
         # self.plan_cartesian_path(self.target_pos)
-        # self.target_pose.pose.position.z += 0.05
-        # self.plan_cartesian_path(self.target_pose.pose)
-        # self.arm_group.set_pose_target(self.target_pose.pose)
+        # self.target_pos.position.z += 0.05
+        # self.plan_cartesian_path(self.target_pos)
+        # self.arm_group.set_pose_target(self.target_pos)
         # self.arm_group.go()
 
     def plan_cartesian_path(self, target_pose):
@@ -292,12 +329,6 @@ class GraspPlannerNode():
 
         self.gripper_move(0.6)
 
-    # def gripper_move(self, width):
-    #     gripper_joints_state = self.gripper_group.get_current_joint_values()
-    #     print("gripper_joints_state: ", gripper_joints_state)
-    #     gripper_joints_state[2] = width
-    #     self.gripper_group.set_joint_value_target(gripper_joints_state)
-    #     self.gripper_group.go()
 
     def gripper_move(self, width):
         joint_state_msg = rospy.wait_for_message("/my_gen3_lite/joint_states", JointState, timeout=1.0)
@@ -305,18 +336,11 @@ class GraspPlannerNode():
 
         # Find indices of the gripper joints
         right_finger_bottom_index = joint_state_msg.name.index('right_finger_bottom_joint')
-        print("right finger bottom index: ", right_finger_bottom_index)
-
-        # joint_pos = joint_state_msg.position
-        # joint_pos = list(joint_pos)
-        # print("joint_pos: ", joint_pos)
-        # joint_pos[right_finger_bottom_index] = width
-        # joint_pos = joint_pos[:6]
+        # print("right finger bottom index: ", right_finger_bottom_index)
 
         # self.gripper_group.set_joint_value_target([width])
-        self.gripper_group.set_joint_value_target({
-                "right_finger_bottom_joint": width})
-
+        self.gripper_group.set_joint_value_target(
+            {"right_finger_bottom_joint": width})
         self.gripper_group.go()
 
  
