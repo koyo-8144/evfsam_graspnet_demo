@@ -6,9 +6,11 @@ import tf
 from geometry_msgs.msg import Pose
 import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
+import cv2
+import pyrealsense2 as rs
 
 
-class GraspPlannerNode():
+class CalculateCameraToEe():
     def __init__(self):
         self.filepath = "/home/chart-admin/koyo_ws/langsam_grasp_ws/src/demo_pkg_v2/src/data/gg_values.txt"
         # self.filepath = "/home/ubuntu/catkin_workspace/src/demo_pkg/data/gg_values.txt"
@@ -68,15 +70,164 @@ class GraspPlannerNode():
         print(self.gripper_group.get_joints())
         # breakpoint()
 
+
+        self.markerLength = 0.066  # 6.6 cm
+        self.count = 0
+        self.count_limit = 30
+
     
     def start(self):
-        rospy.loginfo("Processing GraspNet output")
-        self.process_graspnet_output()
-        rospy.loginfo("Starting grasp planning...")
         rospy.loginfo("Moving to start position")
         self.go_sp()
-        # self.execute_grasp_sequence()
+        rospy.loginfo("Calculate_camera_to_ee")
+        self.calculate_camera_to_ee()
 
+        # self.process_graspnet_output()
+
+    ####### Get Camera to EE Transformation Matrix #######
+
+    def calculate_camera_to_ee(self):
+        T_camera_aruco = self.get_camera_to_aruco() # T_camera_aruco
+        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+
+        T_base_ee = self.get_base_to_ee() # T_base_ee(1)
+        print("Transformation Matrix (base to ee = base to ee(1)):\n", T_base_ee)
+
+        print("Moving ee to aruco marker")
+        self.go_aruco()
+
+        T_base_aruco = self.get_base_to_aruco() # T_base_aruco = T_base_ee(0)
+        print("Transformation Matrix (base to aruco = base to ee(0)):\n", T_base_aruco)
+
+        delta_inv = self.calculate_delta_inv(T_base_aruco, T_base_ee)
+        print("Delta Inverse:\n", delta_inv)
+
+        T_camera_ee = T_camera_aruco @ delta_inv
+        print("Transformation Matrix (camera to ee):\n", T_camera_ee)
+
+        # Transformation Matrix (camera to ee):
+        # [[-0.04498669  0.99839626  0.03436716  0.12331421]
+        # [ 0.9986172   0.0458801  -0.02566522  0.040693  ]
+        # [-0.02720083  0.03316504 -0.99907967  1.08776383]
+        # [ 0.          0.          0.          1.        ]]
+
+
+
+    def get_camera_to_aruco(self):
+        # Load ArUco dictionary
+        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+        
+        # Configure RealSense pipeline
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        
+        # Start streaming
+        pipeline_profile = pipeline.start(config)
+        
+        # Get camera intrinsics
+        profile = pipeline_profile.get_stream(rs.stream.color)
+        intrinsics = profile.as_video_stream_profile().get_intrinsics()
+        camMatrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                            [0, intrinsics.fy, intrinsics.ppy],
+                            [0, 0, 1]])
+        distCoeffs = np.zeros(5)  # Assuming no lens distortion
+
+        print("intrinsics: ", intrinsics)
+        print("camMatrix: ", camMatrix)
+        print("distCoeffs: ", distCoeffs)
+        
+        # Marker length (meters)
+        markerLength = self.markerLength
+        
+        try:
+            while True:
+                frames = pipeline.wait_for_frames()
+                color_frame = frames.get_color_frame()
+                if not color_frame:
+                    continue
+                
+                # Convert RealSense frame to NumPy array
+                frame = np.asanyarray(color_frame.get_data())
+        
+                # Convert to grayscale
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+                # Detect ArUco markers
+                detector = cv2.aruco.ArucoDetector(dictionary)
+                markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(gray)
+        
+                if markerIds is not None:
+                    for i in range(len(markerIds)):
+                        rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(markerCorners[i], markerLength, camMatrix, distCoeffs)
+                        cv2.drawFrameAxes(frame, camMatrix, distCoeffs, rvec, tvec, 0.05)
+
+                        tvec = tvec[0]
+                        print("Translation Vector (tvecs):\n", tvec[i])
+                        # print("Rotation Vector (rvecs):\n", rvec[i])
+                        rotation_matrix, _ = cv2.Rodrigues(rvec[i])
+                        print("Rotation Matrix:\n", rotation_matrix)
+
+                        T_camera_aruco = self.construct_homogeneous_transform(tvec, rotation_matrix)
+                        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+
+                    # Draw detected markers
+                    cv2.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
+        
+                # Show frame
+                cv2.imshow("RealSense ArUco Pose Estimation", frame)
+        
+                # Press 'q' to exit
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+                self.count += 1
+                if self.count == self.count_limit:
+                    break
+        
+        finally:
+            pipeline.stop()
+            cv2.destroyAllWindows()
+        
+        return T_camera_aruco
+
+    def get_base_to_ee(self):
+        while not rospy.is_shutdown():
+            try:
+                # Get transformation from base_link to end_effector_link
+                (trans_base_ee, rot_base_ee) = self.listener.lookupTransform('/base_link', '/tool_frame', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+
+        T_base_ee = self.construct_rot_matrix_homogeneous_transform(trans_base_ee, rot_base_ee)
+
+        return T_base_ee
+
+    def go_aruco(self):
+        self.arm_group.set_joint_value_target([-0.03531032026114289, -1.078645222612689, 
+                                               1.4896657873467227, -1.6066813572192782, 
+                                               -0.5534677251201918, -1.5783778137861342])
+        self.arm_group.go(wait=True)
+
+    def get_base_to_aruco(self):
+        while not rospy.is_shutdown():
+            try:
+                # Get transformation from base_link to end_effector_link
+                (trans_base_aruco, rot_base_aruco) = self.listener.lookupTransform('/base_link', '/tool_frame', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+        
+        T_base_aruco = self.construct_rot_matrix_homogeneous_transform(trans_base_aruco, rot_base_aruco)
+
+        return T_base_aruco
+
+    def calculate_delta_inv(self, T_base_aruco, T_base_ee):
+        T_base_aruco_inv = np.linalg.inv(T_base_aruco)
+        delta_inv = T_base_aruco_inv @ T_base_ee
+
+        return delta_inv
 
 
     ####### Process GraspNet output #######
@@ -237,23 +388,8 @@ class GraspPlannerNode():
         print("Transformation Matrix (base to obj):")
         print(T_base_obj)
 
-        # T_base_obj_C = T_base_obj
-        # print("GraspNet output (grasp pose) corresponds to robot's camera position -> this Transformation Matrix (base to obj) needs additional transformation", T_base_obj_C)
-        # trans_camera_ee, rot_camera_ee = self.get_camera_ee()
-        # print("Transition (camera to ee):")
-        # print(trans_camera_ee)
-        # print("Rotation (camera to ee):")
-        # print(rot_camera_ee)
-        # T_camera_ee = self.construct_rot_matrix_homogeneous_transform(trans_camera_ee, rot_camera_ee)
-        # print("Transformation Matrix (camera to ee):")
-        # print(T_camera_ee)
-        # T_base_obj_EE = T_base_obj_C @ T_camera_ee
-        # print("Transformation Matrix (base to obj) for EE:")
-        # print(T_base_obj_EE)
-
 
         self.target_pos = self.transformation_to_pose(T_base_obj)
-        # self.target_pos = self.transformation_to_pose(T_base_obj_EE)
         print("Target Pose: ", self.target_pos)
 
         self.gripper_width = self.read_gripper_width(self.filepath)
@@ -270,110 +406,14 @@ class GraspPlannerNode():
                                                -2.114137663337607, -1.6563429070772748])
         self.arm_group.go(wait=True)
 
-    def grasp_obj(self):
-        """
-        Grasp object based on object detection.
-        """
-
-        # self.target_pos.position.z += 0.05
-        # self.target_pos.position.x += 0.125
-        # self.target_pos.position.y -= 0.2
-        # self.target_pos.position.x += 0.1
-        # self.target_pos.position.y -= 0.15
-        # self.target_pos.position.x += 0.075
-        # self.target_pos.position.y += 0.075
-        self.arm_group.set_pose_target(self.target_pos)
-        self.arm_group.go()
-        # self.plan_cartesian_path(self.target_pos)
-        # self.target_pos.position.z += 0.05
-        # self.plan_cartesian_path(self.target_pos)
-        # self.arm_group.set_pose_target(self.target_pos)
-        # self.arm_group.go()
-
-    def plan_cartesian_path(self, target_pose):
-        """
-        Cartesian path planning
-        """
-        waypoints = []
-        waypoints.append(target_pose)  # Add the pose to the list of waypoints
-
-        # Set robot arm's current state as start state
-        self.arm_group.set_start_state_to_current_state()
-
-        try:
-            # Compute trajectory
-            (plan, fraction) = self.arm_group.compute_cartesian_path(
-                waypoints,   # List of waypoints
-                0.01,        # eef_step (endpoint step)
-                0.0,         # jump_threshold
-                False        # avoid_collisions
-            )
-
-            if fraction < 1.0:
-                rospy.logwarn("Cartesian path planning incomplete. Fraction: %f", fraction)
-
-            # Execute the plan
-            if plan:
-                self.arm_group.execute(plan, wait=True)
-            else:
-                rospy.logerr("Failed to compute Cartesian path")
-        except Exception as e:
-            rospy.logerr("Error in Cartesian path planning: %s", str(e))
 
 
-    def place_obj(self):
-        self.target_pos.position.z += 0.07
-        # self.plan_cartesian_path(self.target_pose.pose)
 
-        self.arm_group.set_joint_value_target([-1.1923993012061151, 0.7290586635521652,
-                                               -0.7288901499177471, 1.6194515338395425,
-                                               -1.6699862200379725, 0.295133228129065])
-        self.arm_group.go()
-
-        self.gripper_move(0.6)
-
-
-    def gripper_move(self, width):
-        joint_state_msg = rospy.wait_for_message("/my_gen3_lite/joint_states", JointState, timeout=1.0)
-        # print("joint_state_msg: ", joint_state_msg)
-
-        # Find indices of the gripper joints
-        right_finger_bottom_index = joint_state_msg.name.index('right_finger_bottom_joint')
-        # print("right finger bottom index: ", right_finger_bottom_index)
-
-        # self.gripper_group.set_joint_value_target([width])
-        self.gripper_group.set_joint_value_target(
-            {"right_finger_bottom_joint": width})
-        self.gripper_group.go()
-
- 
-    def execute_grasp_sequence(self):
-        """
-        Execute the grasp sequence as a separate method.
-        This method waits for the object pose to be detected before proceeding.
-        """
-        rospy.loginfo('Starting grasp sequence')
-
-        self.go_sp()
-        self.gripper_move(0.6)
-
-        # 1. Grasp the object
-        self.grasp_obj()
-
-        # 3. Move gripper based on the grasp width
-        self.gripper_move(3.6 * self.gripper_width)
-
-        # 4. Place the object at the target location
-        self.place_obj()
-        
-        self.go_sp()
-
-        rospy.loginfo("Grasp completed successfully.")
 
 def main():
     rospy.init_node('grasp_planning', anonymous=True)
-    grasp_planner_node = GraspPlannerNode()
-    grasp_planner_node.start()
+    calculate_camera_to_ee = CalculateCameraToEe()
+    calculate_camera_to_ee.start()
     rospy.spin()
  
 if __name__ == "__main__":
