@@ -6,6 +6,11 @@ import tf
 from geometry_msgs.msg import Pose
 import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
+import cv2
+import pyrealsense2 as rs
+
+CALIBRATION = 1
+SET_START = 0
 
 
 class GraspPlannerNode():
@@ -68,16 +73,189 @@ class GraspPlannerNode():
         print(self.gripper_group.get_joints())
         # breakpoint()
 
+        if CALIBRATION:
+            self.markerLength = 0.066  # 6.6 cm
+            self.count = 0
+            self.count_limit = 500
+        else:
+            self.T_ee_camera = np.array([[-0.05167692,  0.99815805,  0.0317807,  -0.04191359,],
+                                         [ 0.99058026,  0.0552735,  -0.12528205, -0.0394,    ],
+                                         [-0.12680792,  0.02500715, -0.99161202,  1.13307104,],
+                                         [ 0.,          0.,          0.,          1.,        ]])
+
     
     def start(self):
-        rospy.loginfo("Processing GraspNet output")
-        self.process_graspnet_output()
-        rospy.loginfo("Starting grasp planning...")
-        rospy.loginfo("Moving to start position")
-        self.go_sp()
-        # self.execute_grasp_sequence()
+        if CALIBRATION:
+            rospy.loginfo("Moving to start position")
+            self.go_sp()
+            rospy.loginfo("Calculate EE to Camera Transformation")
+            self.calculate_ee_to_camera()
+
+        if SET_START:
+            rospy.loginfo("Moving to start position")
+            self.go_sp()
+        else:
+            rospy.loginfo("Processing GraspNet output")
+            self.process_graspnet_output()
+            rospy.loginfo("Starting grasp planning...")
+            rospy.loginfo("Moving to start position")
+            self.go_sp()
+            self.execute_grasp_sequence()
 
 
+    ####### Get EE to Camera Transformation Matrix #######
+
+    def calculate_ee_to_camera(self):
+        T_camera_aruco = self.get_camera_to_aruco() # T_camera_aruco
+        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+
+        T_base_ee = self.get_base_to_ee() # T_base_ee(1)
+        print("Transformation Matrix (base to ee = base to ee(1)):\n", T_base_ee)
+
+        print("Moving ee to aruco marker")
+        self.go_aruco()
+
+        T_base_aruco = self.get_base_to_aruco() # T_base_aruco = T_base_ee(0)
+        print("Transformation Matrix (base to aruco = base to ee(0)):\n", T_base_aruco)
+
+        delta_inv = self.calculate_delta_inv(T_base_aruco, T_base_ee)
+        print("Delta Inverse:\n", delta_inv)
+
+        T_camera_ee = T_camera_aruco @ delta_inv
+        print("Transformation Matrix (camera to ee):\n", T_camera_ee)
+
+        T_ee_camera = np.linalg.inv(T_camera_ee)
+        print("Transformation Matrix (ee to camera):\n", T_ee_camera)
+
+        self.T_ee_camera = T_ee_camera
+
+        # Transformation Matrix (camera to ee):
+        # [[-0.04498669  0.99839626  0.03436716  0.12331421]
+        # [ 0.9986172   0.0458801  -0.02566522  0.040693  ]
+        # [-0.02720083  0.03316504 -0.99907967  1.08776383]
+        # [ 0.          0.          0.          1.        ]]
+
+
+
+    def get_camera_to_aruco(self):
+        # Load ArUco dictionary
+        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+        
+        # Configure RealSense pipeline
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        
+        # Start streaming
+        pipeline_profile = pipeline.start(config)
+        
+        # Get camera intrinsics
+        profile = pipeline_profile.get_stream(rs.stream.color)
+        intrinsics = profile.as_video_stream_profile().get_intrinsics()
+        camMatrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                            [0, intrinsics.fy, intrinsics.ppy],
+                            [0, 0, 1]])
+        distCoeffs = np.zeros(5)  # Assuming no lens distortion
+
+        print("intrinsics: ", intrinsics)
+        print("camMatrix: ", camMatrix)
+        print("distCoeffs: ", distCoeffs)
+        
+        # Marker length (meters)
+        markerLength = self.markerLength
+        
+        try:
+            while True:
+                frames = pipeline.wait_for_frames()
+                color_frame = frames.get_color_frame()
+                if not color_frame:
+                    continue
+                
+                # Convert RealSense frame to NumPy array
+                frame = np.asanyarray(color_frame.get_data())
+        
+                # Convert to grayscale
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+                # Detect ArUco markers
+                detector = cv2.aruco.ArucoDetector(dictionary)
+                markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(gray)
+        
+                if markerIds is not None:
+                    for i in range(len(markerIds)):
+                        rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(markerCorners[i], markerLength, camMatrix, distCoeffs)
+                        cv2.drawFrameAxes(frame, camMatrix, distCoeffs, rvec, tvec, 0.05)
+
+                        tvec = tvec[0]
+                        print("Translation Vector (tvecs):\n", tvec[i])
+                        # print("Rotation Vector (rvecs):\n", rvec[i])
+                        rotation_matrix, _ = cv2.Rodrigues(rvec[i])
+                        print("Rotation Matrix:\n", rotation_matrix)
+
+                        T_camera_aruco = self.construct_homogeneous_transform(tvec, rotation_matrix)
+                        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+
+                    # Draw detected markers
+                    cv2.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
+        
+                # Show frame
+                cv2.imshow("RealSense ArUco Pose Estimation", frame)
+        
+                # Press 'q' to exit
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+                self.count += 1
+                if self.count == self.count_limit:
+                    break
+        
+        finally:
+            pipeline.stop()
+            cv2.destroyAllWindows()
+        
+        return T_camera_aruco
+
+    def get_base_to_ee(self):
+        while not rospy.is_shutdown():
+            try:
+                # Get transformation from base_link to end_effector_link
+                (trans_base_ee, rot_base_ee) = self.listener.lookupTransform('/base_link', '/tool_frame', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+
+        T_base_ee = self.construct_rot_matrix_homogeneous_transform(trans_base_ee, rot_base_ee)
+
+        return T_base_ee
+
+    def go_aruco(self):
+        # self.arm_group.set_joint_value_target([-0.03531032026114289, -1.078645222612689, 
+        #                                        1.4896657873467227, -1.6066813572192782, 
+        #                                        -0.5534677251201918, -1.5783778137861342])
+
+        self.arm_group.set_joint_value_target([-0.06018797326800929, -1.1773499620942962, 
+                                               1.4097070387781836, -1.5753114501070167, 
+                                               -0.5708187522542758, -1.6280532249671644])
+        self.arm_group.go(wait=True)
+
+    def get_base_to_aruco(self):
+        while not rospy.is_shutdown():
+            try:
+                # Get transformation from base_link to end_effector_link
+                (trans_base_aruco, rot_base_aruco) = self.listener.lookupTransform('/base_link', '/tool_frame', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+        
+        T_base_aruco = self.construct_rot_matrix_homogeneous_transform(trans_base_aruco, rot_base_aruco)
+
+        return T_base_aruco
+
+    def calculate_delta_inv(self, T_base_aruco, T_base_ee):
+        T_base_aruco_inv = np.linalg.inv(T_base_aruco)
+        delta_inv = T_base_aruco_inv @ T_base_ee
+
+        return delta_inv
 
     ####### Process GraspNet output #######
 
@@ -148,7 +326,7 @@ class GraspPlannerNode():
 
         return rotation_matrix
 
-    def get_base_camera(self):
+    def get_base_to_camera(self):
         while not rospy.is_shutdown():
             try:
                 # Get transformation from base_link to end_effector_link
@@ -156,19 +334,11 @@ class GraspPlannerNode():
                 break
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 continue
+        
+        T_base_camera = self.construct_rot_matrix_homogeneous_transform(trans_base_camera, rot_base_camera)
 
-        return trans_base_camera, rot_base_camera
+        return T_base_camera
     
-    def get_camera_ee(self):
-        while not rospy.is_shutdown():
-            try:
-                # Get transformation from base_link to end_effector_link
-                (trans_camera_ee, rot_camera_ee) = self.listener.lookupTransform('/d435_depth_optical_frame', '/tool_frame', rospy.Time(0))
-                break
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                continue
-
-        return trans_camera_ee, rot_camera_ee
 
     def transformation_to_pose(self, T_base_obj):
         # Extract translation (position)
@@ -213,53 +383,37 @@ class GraspPlannerNode():
         rot_grasp = poses["rotation"]
         print("trans: ", trans_grasp)
         print("rot: ", rot_grasp.shape)
-        breakpoint()
         T_grasp_obj = self.construct_homogeneous_transform(trans_grasp, rot_grasp)
-        print("Transformation Matrix (grasp to obj):")
-        print(T_grasp_obj)
+        print("Transformation Matrix (grasp to obj):\n", T_grasp_obj)
+
+        T_base_ee = self.get_base_to_ee()
+        print("Transformation Matrix (base to ee):\n", T_base_ee)
+        
+        T_ee_camera = self.T_ee_camera
+        print("Transformation Matrix (ee to camera):\n", T_ee_camera)
+
+        T_base_camera = T_base_ee @ T_ee_camera
+        print("Transformation Matrix (base to camera):\n", T_base_camera)
 
         trans_zero = np.zeros(3)
         rot_z_90 = self.rotation_matrix_z(90)
         T_camera_grasp = self.construct_homogeneous_transform(trans_zero, rot_z_90)
-        print("Transformation Matrix (camera to grasp):")
-        print(T_camera_grasp)
+        print("Transformation Matrix (camera to grasp):\n", T_camera_grasp)
         
         T_camera_obj = T_camera_grasp @ T_grasp_obj
-        print("Transformation Matrix (camera to obj):")
-        print(T_camera_obj)
-        
-        trans_base_camera, rot_base_camera = self.get_base_camera()
-        T_base_camera = self.construct_rot_matrix_homogeneous_transform(trans_base_camera, rot_base_camera)
-        print("Transformation Matrix (base to camera):")
-        print(T_base_camera)
+        print("Transformation Matrix (camera to obj):\n", T_camera_obj)
+    
         
         T_base_obj = T_base_camera @ T_camera_obj
-        print("Transformation Matrix (base to obj):")
-        print(T_base_obj)
-
-        # T_base_obj_C = T_base_obj
-        # print("GraspNet output (grasp pose) corresponds to robot's camera position -> this Transformation Matrix (base to obj) needs additional transformation", T_base_obj_C)
-        # trans_camera_ee, rot_camera_ee = self.get_camera_ee()
-        # print("Transition (camera to ee):")
-        # print(trans_camera_ee)
-        # print("Rotation (camera to ee):")
-        # print(rot_camera_ee)
-        # T_camera_ee = self.construct_rot_matrix_homogeneous_transform(trans_camera_ee, rot_camera_ee)
-        # print("Transformation Matrix (camera to ee):")
-        # print(T_camera_ee)
-        # T_base_obj_EE = T_base_obj_C @ T_camera_ee
-        # print("Transformation Matrix (base to obj) for EE:")
-        # print(T_base_obj_EE)
-
+        print("Transformation Matrix (base to obj):\n", T_base_obj)
 
         self.target_pos = self.transformation_to_pose(T_base_obj)
-        # self.target_pos = self.transformation_to_pose(T_base_obj_EE)
-        print("Target Pose: ", self.target_pos)
+        print("Target Pose:\n", self.target_pos)
 
         self.gripper_width = self.read_gripper_width(self.filepath)
-        print("Gripper Width: ", self.gripper_width)
+        print("Gripper Width:\n", self.gripper_width)
 
-        # breakpoint()
+        breakpoint()
 
 
     ####### Grasp Planning #######
