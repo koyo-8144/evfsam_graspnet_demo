@@ -78,10 +78,10 @@ class GraspPlannerNode():
             self.count = 0
             self.count_limit = 100
         else:
-            self.T_ee_camera = np.array([[-0.01597813,  0.99984117,  0.0078954,   0.01465415,],
-                                        [ 0.99961566,  0.01615245, -0.02253084, -0.07129481,],
-                                        [-0.02265479,  0.00753236, -0.99971497,  1.13273571,],
-                                        [ 0.,          0.,          0.,          1.        ]])
+            self.T_ee_camera = np.array([[ 0.03193068,  0.9919599,   0.12245809,  0.03375562,],
+                                          [ 0.99915173, -0.02849164, -0.02973286, -0.0781098, ],
+                                          [-0.02600477,  0.1233036,  -0.99202821,  1.13342263,],
+                                          [ 0.,          0.,          0.,          1.        ]])
 
     
     def start(self):
@@ -122,7 +122,9 @@ class GraspPlannerNode():
         T_base_aruco = self.get_base_to_aruco() # T_base_aruco = T_base_ee(0)
         print("Transformation Matrix (base to aruco = base to ee(0)):\n", T_base_aruco)
 
+
         delta = self.calculate_delta(T_base_ee, T_base_aruco)
+        print("delta: ", delta)
         delta_inv = np.linalg.inv(delta)
 
         T_camera_ee = T_camera_aruco @ delta_inv
@@ -140,13 +142,78 @@ class GraspPlannerNode():
         # T_ee_camera = np.linalg.inv(T_camera_ee)
         # print("Transformation Matrix (ee to camera):\n", T_ee_camera)
 
+        # T_base_aruco_v2 = T_base_ee @ delta
+        # print("Original:")
+        # print(T_base_aruco)
+        # print("calculate")
+        # print(T_base_aruco_v2)
+
+        print("original")
+        # print(T_ee_camera)
+        # print("calculate")
+        # T_ee_camera_v2 = delta @ np.linalg.inv(T_camera_aruco)
+        # T_aruco_camera = np.linalg.inv(T_camera_aruco) 
+        # print(np.linalg.inv(T_camera_aruco))
+        # print("calculate")
+        # T_ee_camera_v3 = delta @ T_camera_aruco
+        # # print(delta[:,3] - T_aruco_camera[:,3])
+        # T_base_aruco_rot = np.array([[T_base_aruco[0,0:2], 0],
+        #                              [T_base_aruco[1,0:2], 0],
+        #                              [T_base_aruco[2,0:2], 0],
+        #                              [T_base_aruco[3,0:2], 1]])
+        T_base_aruco_rot = np.array([[0.00160695 ,-0.99983118 ,-0.01830361, 0],
+                                     [-0.99999777 ,-0.00158161, -0.00139917, 0],
+                                     [0.00136998 , 0.01830582 ,-0.9998315, 0],
+                                     [0, 0, 0, 1]])
+        
+        T_camera_aruco_rot = np.array([[ 0.03993667,  0.9966958,  -0.07072862,  0  ],
+                                        [ 0.99712245, -0.03518888,  0.0671459,  0],
+                                        [ 0.06443517, -0.07320668, -0.99523308,  0 ],
+                                        [ 0,          0,         0,        1 ]])
+
+        # T_base_aruco_rot2 = T_base_aruco
+        # T_base_aruco_rot2[0,3] = 0
+        # T_base_aruco_rot2[1,3] = 0
+        # T_base_aruco_rot2[2,3] = 0
+
+        # print("aruco rotation ")
+        print(T_base_aruco)
+        # print(T_base_aruco_rot2)
+
+        print(" base to aruco without rotation ")
+        print(T_base_aruco @ np.linalg.inv( T_base_aruco_rot  ) )
+
+        # T_ee_cameraX = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],  [0.02233837, -0.11826378, -0.14449401, 1 ] ])
+        T_ee_cameraX = np.array([[1,0,0, 0.02233837],
+                                 [0,1,0,-0.11826378],
+                                 [0,0,1,-0.14449401],  
+                                 [0,0,0, 1 ] ])
+        
+          
+        # print( T_base_ee @ T_ee_cameraX @ T_camera_aruco)  
+
+        # print( T_base_aruco @ np.linalg.inv( T_base_aruco_rot) @ T_ee_cameraX @ T_camera_aruco)
+
+        # print( T_camera_aruco @ np.linalg.inv( T_camera_aruco_rot ))  
+
+        # print("final results")
+        # print( T_base_ee @ T_ee_cameraX @ T_camera_aruco @ np.linalg.inv( T_camera_aruco_rot ) )  
+
+        print( T_base_ee[0:2,0:2] @ T_ee_cameraX[0:2,0:2] ) 
+        print( np.linalg.inv( T_camera_aruco_rot )  )   
+
+
+
+        print( T_base_ee[:,3] +  T_ee_cameraX[:,3]  +  T_camera_aruco[:,3]  )    
+
+
+
+
+        breakpoint()
+
         self.T_ee_camera = T_ee_camera
 
-        # Transformation Matrix (camera to ee):
-        # [[-0.04498669  0.99839626  0.03436716  0.12331421]
-        # [ 0.9986172   0.0458801  -0.02566522  0.040693  ]
-        # [-0.02720083  0.03316504 -0.99907967  1.08776383]
-        # [ 0.          0.          0.          1.        ]]
+        
 
 
 
