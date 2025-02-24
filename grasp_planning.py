@@ -76,12 +76,12 @@ class GraspPlannerNode():
         if CALIBRATION:
             self.markerLength = 0.066  # 6.6 cm
             self.count = 0
-            self.count_limit = 500
+            self.count_limit = 100
         else:
-            self.T_ee_camera = np.array([[-0.05167692,  0.99815805,  0.0317807,  -0.04191359,],
-                                         [ 0.99058026,  0.0552735,  -0.12528205, -0.0394,    ],
-                                         [-0.12680792,  0.02500715, -0.99161202,  1.13307104,],
-                                         [ 0.,          0.,          0.,          1.,        ]])
+            self.T_ee_camera = np.array([[-0.01597813,  0.99984117,  0.0078954,   0.01465415,],
+                                        [ 0.99961566,  0.01615245, -0.02253084, -0.07129481,],
+                                        [-0.02265479,  0.00753236, -0.99971497,  1.13273571,],
+                                        [ 0.,          0.,          0.,          1.        ]])
 
     
     def start(self):
@@ -90,6 +90,7 @@ class GraspPlannerNode():
             self.go_sp()
             rospy.loginfo("Calculate EE to Camera Transformation")
             self.calculate_ee_to_camera()
+            self.go_sp()
 
         if SET_START:
             rospy.loginfo("Moving to start position")
@@ -106,8 +107,11 @@ class GraspPlannerNode():
     ####### Get EE to Camera Transformation Matrix #######
 
     def calculate_ee_to_camera(self):
-        T_camera_aruco = self.get_camera_to_aruco() # T_camera_aruco
-        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+        T_aruco_camera = self.get_aruco_to_camera() # T_aruco_camera
+        print("Transformation Matrix (aruco to camera):\n", T_aruco_camera)
+
+        T_camera_aruco =  np.linalg.inv(T_aruco_camera) # T_camera_aruco
+        print("Transformation Matrix (camera to aruco):\n", T_camera_aruco)
 
         T_base_ee = self.get_base_to_ee() # T_base_ee(1)
         print("Transformation Matrix (base to ee = base to ee(1)):\n", T_base_ee)
@@ -118,14 +122,23 @@ class GraspPlannerNode():
         T_base_aruco = self.get_base_to_aruco() # T_base_aruco = T_base_ee(0)
         print("Transformation Matrix (base to aruco = base to ee(0)):\n", T_base_aruco)
 
-        delta_inv = self.calculate_delta_inv(T_base_aruco, T_base_ee)
-        print("Delta Inverse:\n", delta_inv)
+        delta = self.calculate_delta(T_base_ee, T_base_aruco)
+        delta_inv = np.linalg.inv(delta)
 
         T_camera_ee = T_camera_aruco @ delta_inv
         print("Transformation Matrix (camera to ee):\n", T_camera_ee)
-
+        
         T_ee_camera = np.linalg.inv(T_camera_ee)
         print("Transformation Matrix (ee to camera):\n", T_ee_camera)
+
+        # delta_inv = self.calculate_delta_inv(T_base_aruco, T_base_ee)
+        # print("Delta Inverse:\n", delta_inv)
+
+        # T_camera_ee = T_camera_aruco @ delta_inv
+        # print("Transformation Matrix (camera to ee):\n", T_camera_ee)
+
+        # T_ee_camera = np.linalg.inv(T_camera_ee)
+        # print("Transformation Matrix (ee to camera):\n", T_ee_camera)
 
         self.T_ee_camera = T_ee_camera
 
@@ -137,7 +150,7 @@ class GraspPlannerNode():
 
 
 
-    def get_camera_to_aruco(self):
+    def get_aruco_to_camera(self):
         # Load ArUco dictionary
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
         
@@ -187,13 +200,13 @@ class GraspPlannerNode():
                         cv2.drawFrameAxes(frame, camMatrix, distCoeffs, rvec, tvec, 0.05)
 
                         tvec = tvec[0]
-                        print("Translation Vector (tvecs):\n", tvec[i])
+                        # print("Translation Vector (tvecs):\n", tvec[i])
                         # print("Rotation Vector (rvecs):\n", rvec[i])
                         rotation_matrix, _ = cv2.Rodrigues(rvec[i])
-                        print("Rotation Matrix:\n", rotation_matrix)
+                        # print("Rotation Matrix:\n", rotation_matrix)
 
-                        T_camera_aruco = self.construct_homogeneous_transform(tvec, rotation_matrix)
-                        print("Transformation Matrix (camera to arco):\n", T_camera_aruco)
+                        T_aruco_camera = self.construct_homogeneous_transform(tvec, rotation_matrix)
+                        # print("Transformation Matrix (arco to camera):\n", T_aruco_camera)
 
                     # Draw detected markers
                     cv2.aruco.drawDetectedMarkers(frame, markerCorners, markerIds)
@@ -213,7 +226,7 @@ class GraspPlannerNode():
             pipeline.stop()
             cv2.destroyAllWindows()
         
-        return T_camera_aruco
+        return T_aruco_camera
 
     def get_base_to_ee(self):
         while not rospy.is_shutdown():
@@ -251,6 +264,13 @@ class GraspPlannerNode():
 
         return T_base_aruco
 
+
+    def calculate_delta(self, T_base_ee, T_base_aruco):
+        T_base_ee_inv = np.linalg.inv(T_base_ee)
+        delta = T_base_ee_inv @ T_base_aruco
+
+        return delta
+
     def calculate_delta_inv(self, T_base_aruco, T_base_ee):
         T_base_aruco_inv = np.linalg.inv(T_base_aruco)
         delta_inv = T_base_aruco_inv @ T_base_ee
@@ -279,8 +299,8 @@ class GraspPlannerNode():
     def construct_rot_matrix_homogeneous_transform(self, translation, quaternion):
         # Convert quaternion to rotation matrix
         rotation_matrix = tf.transformations.quaternion_matrix(quaternion)[:3, :3]
-        print("Rotation Matrix:")
-        print(rotation_matrix)
+        # print("Rotation Matrix:")
+        # print(rotation_matrix)
 
         # Construct the 4x4 homogeneous transformation matrix
         T = np.identity(4)
@@ -325,6 +345,35 @@ class GraspPlannerNode():
         # print("rotation_matrix: ", rotation_matrix)
 
         return rotation_matrix
+
+    import numpy as np
+
+    def rotation_matrix_y(self, theta_degrees):
+        """
+        Generates a 3x3 rotation matrix for a rotation around the y-axis.
+
+        Args:
+        - theta_degrees (float): The angle of rotation in degrees.
+
+        Returns:
+        - numpy.ndarray: A 3x3 rotation matrix.
+        """
+        # Convert degrees to radians
+        theta_radians = np.radians(theta_degrees)
+
+        # Calculate cosine and sine of the angle
+        cos_theta = np.cos(theta_radians)
+        sin_theta = np.sin(theta_radians)
+
+        # Construct the rotation matrix for Y-axis rotation
+        rotation_matrix = np.array([
+            [ cos_theta,  0, sin_theta],
+            [ 0,          1, 0        ],
+            [-sin_theta,  0, cos_theta]
+        ])
+
+        return rotation_matrix
+
 
     def get_base_to_camera(self):
         while not rospy.is_shutdown():
@@ -375,17 +424,7 @@ class GraspPlannerNode():
         return width
 
     def process_graspnet_output(self):
-        """Start broadcasting using values from gg_values.txt."""
-        poses = self.read_gg_values(self.filepath)
-        # print("Obtained poses from gg_values.txt: ", poses)
-
-        trans_grasp = poses["translation"]
-        rot_grasp = poses["rotation"]
-        print("trans: ", trans_grasp)
-        print("rot: ", rot_grasp.shape)
-        T_grasp_obj = self.construct_homogeneous_transform(trans_grasp, rot_grasp)
-        print("Transformation Matrix (grasp to obj):\n", T_grasp_obj)
-
+        # --- Get Base to Camera ---
         T_base_ee = self.get_base_to_ee()
         print("Transformation Matrix (base to ee):\n", T_base_ee)
         
@@ -395,15 +434,27 @@ class GraspPlannerNode():
         T_base_camera = T_base_ee @ T_ee_camera
         print("Transformation Matrix (base to camera):\n", T_base_camera)
 
+        # --- Get Camera to Obj ---
         trans_zero = np.zeros(3)
-        rot_z_90 = self.rotation_matrix_z(90)
+        # rot_z_90 = self.rotation_matrix_z(90)
+        rot_z_90 = self.rotation_matrix_y(180)
         T_camera_grasp = self.construct_homogeneous_transform(trans_zero, rot_z_90)
         print("Transformation Matrix (camera to grasp):\n", T_camera_grasp)
+
+        poses = self.read_gg_values(self.filepath)
+        trans_grasp = poses["translation"]
+        rot_grasp = poses["rotation"]
+        print("trans: ", trans_grasp)
+        print("rot: ", rot_grasp.shape)
+        T_grasp_obj = self.construct_homogeneous_transform(trans_grasp, rot_grasp)
+        print("Transformation Matrix (grasp to obj):\n", T_grasp_obj)
         
         T_camera_obj = T_camera_grasp @ T_grasp_obj
         print("Transformation Matrix (camera to obj):\n", T_camera_obj)
     
-        
+
+
+        # --- Get Base to Obj ---
         T_base_obj = T_base_camera @ T_camera_obj
         print("Transformation Matrix (base to obj):\n", T_base_obj)
 
