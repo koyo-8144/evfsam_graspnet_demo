@@ -8,8 +8,8 @@ import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
 import cv2
 
-SET_START = 0
-DEBUG_OBJ = 1
+SET_START = 1
+DEBUG_OBJ = 0
 
 class GraspPlannerNode():
     def __init__(self):

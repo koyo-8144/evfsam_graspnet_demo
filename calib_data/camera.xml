@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<root>
+<camera>
+    <name>Camera</name>
+    <image_width>640</image_width>
+    <image_height>480</image_height>
+    <model>
+    <type>perspectiveProjWithDistortion</type>
+    <px>609.0291748046875</px>
+    <py>607.6333618164062</py>
+    <u0>325.5488586425781</u0>
+    <v0>244.4638214111328</v0>
+    <kud>0.0</kud>
+    <kdu>0</kdu>
+    </model>
+</camera>
+</root>
