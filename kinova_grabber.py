@@ -167,11 +167,11 @@ class KinovaCalibration:
         rpy = euler_from_quaternion(rot)
 
         # Save image
-        img_filename = os.path.join(SAVE_PATH, f"kinova_image_{self.image_count}.png")
+        img_filename = os.path.join(SAVE_PATH, f"test_image_{self.image_count}.png")
         cv2.imwrite(img_filename, self.latest_image)
 
         # Save pose as YAML in the required format
-        pose_filename = os.path.join(SAVE_PATH, f"kinova_pose_{self.image_count}.yaml")
+        pose_filename = os.path.join(SAVE_PATH, f"test_pose_fPe_{self.image_count}.yaml")
         pose_data = {
             "rows": 6,
             "cols": 1,

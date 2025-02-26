@@ -504,8 +504,8 @@ class GraspPlannerNode():
         # --- Get Camera to Obj ---
         trans_zero = np.zeros(3)
         # rot_z_90 = self.rotation_matrix_z(90)
-        rot_z_90 = self.rotation_matrix_y(180)
-        T_camera_grasp = self.construct_homogeneous_transform(trans_zero, rot_z_90)
+        rot_y_180 = self.rotation_matrix_y(180)
+        T_camera_grasp = self.construct_homogeneous_transform(trans_zero, rot_y_180)
         print("Transformation Matrix (camera to grasp):\n", T_camera_grasp)
 
         poses = self.read_gg_values(self.filepath)

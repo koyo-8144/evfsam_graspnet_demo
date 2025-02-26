@@ -2,9 +2,6 @@ import cv2
 import requests
 import numpy as np
 
-from scipy.io.wavfile import write
-from pydub import AudioSegment
-# from playsound import playsound
 import os
 import base64
  
