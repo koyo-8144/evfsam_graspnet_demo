@@ -9,7 +9,7 @@ from sensor_msgs.msg import  JointState
 import cv2
 import pyrealsense2 as rs
 
-CALIBRATION = 1
+CALIBRATION = 0
 SET_START = 0
 
 
@@ -71,10 +71,10 @@ class CameraTFBroadcaster:
             self.count = 0
             self.count_limit = 100
         else:
-            self.T_ee_camera_color = np.array([[-0.99947265, -0.03110914,  0.00930841, -0.02183181,],
-                                               [ 0.03094438, -0.99937052, -0.0173496,  -0.12472928,],
-                                               [ 0.00984228, -0.01705241,  0.99980615, -0.14070282,],
-                                               [ 0.,          0.,          0.,          1.        ]])
+            self.T_ee_camera_color = np.array([[-0.99999149, -0.00346816,  0.00223273,  0.0319287, ],
+                                               [ 0.0035009,  -0.9998839,   0.01482983, -0.0723345, ],
+                                               [ 0.00218104,  0.01483752,  0.99988754, -0.13790191,],
+                                               [ 0. ,         0.,          0.,          1.        ]])
 
     
     def start(self):
