@@ -67,7 +67,7 @@ class CameraTFBroadcaster:
         # breakpoint()
 
         if CALIBRATION:
-            self.markerLength = 0.1325 #0.066  # 6.6 cm
+            self.markerLength = 0.066   # 0.1325 #0.066  # 6.6 cm
             self.count = 0
             self.count_limit = 100
         else:
@@ -207,11 +207,15 @@ class CameraTFBroadcaster:
         
                 # Convert to grayscale
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
+
+                # **Enhance white areas while keeping black intact**
+                enhanced = cv2.addWeighted(gray, 1.5, np.zeros_like(gray), 0, 50)
+                enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
+
                 # Detect ArUco markers
                 detector = cv2.aruco.ArucoDetector(dictionary)
-                markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(gray)
-        
+                markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(enhanced)
+            
                 if markerIds is not None:
                     for i in range(len(markerIds)):
                         rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(markerCorners[i], markerLength, camMatrix, distCoeffs)
@@ -231,7 +235,8 @@ class CameraTFBroadcaster:
         
                 # Show frame
                 cv2.imshow("RealSense ArUco Pose Estimation", frame)
-        
+                cv2.imshow("Enhanced ArUco Detection", enhanced)
+
                 # Press 'q' to exit
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -422,9 +427,9 @@ class CameraTFBroadcaster:
     ####### Grasp Planning #######
 
     def go_sp(self):
-        self.arm_group.set_joint_value_target([-0.08498747219394814, -0.2794001977631106,
-                                               0.7484180883797364, -1.570090066123494,
-                                               -2.114137663337607, -1.6563429070772748])
+        self.arm_group.set_joint_value_target([0.02754534147079857, -0.3292162455300689, 
+                                               0.6239125970105316, -1.5710093796821027, 
+                                               -2.1819422621718063, -1.6193681240201974])
         self.arm_group.go(wait=True)
 
 

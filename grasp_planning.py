@@ -537,9 +537,9 @@ class GraspPlannerNode():
     ####### Grasp Planning #######
 
     def go_sp(self):
-        self.arm_group.set_joint_value_target([-0.08498747219394814, -0.2794001977631106,
-                                               0.7484180883797364, -1.570090066123494,
-                                               -2.114137663337607, -1.6563429070772748])
+        self.arm_group.set_joint_value_target([0.02754534147079857, -0.3292162455300689, 
+                                               0.6239125970105316, -1.5710093796821027, 
+                                               -2.1819422621718063, -1.6193681240201974])
         self.arm_group.go(wait=True)
 
     def grasp_obj(self):

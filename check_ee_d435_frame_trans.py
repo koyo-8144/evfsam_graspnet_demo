@@ -78,9 +78,9 @@ class GraspPlannerNode():
             self.go_sp()
         
     def check_ee_d435_trans(self):
-        trans_x_list = []
-        trans_y_list = []
-        trans_z_list = []
+        error_x_list = []
+        error_y_list = []
+        error_z_list = []
 
         for i in range(10):
             print("Getting values")
@@ -107,24 +107,32 @@ class GraspPlannerNode():
 
             print("T_base_ee_delta_trans + T_ee_d435detph_delta_trans:\n", T_base_ee_delta_trans + T_ee_d435detph_delta_trans)
             print("T_base_d435depth_delta_trans:\n", T_base_d435depth_delta_trans)
+            # T_base_ee_delta_trans + T_ee_d435detph_delta_trans:
+            # [-9.81477784e-02  2.43397749e-04  4.96638512e-01]
+            # T_base_d435depth_delta_trans:
+            # [-9.98750077e-02  6.16993390e-05  4.97805088e-01]
 
-            print("Inaccurate value delta in URDF file:\n", T_ee_d435detph_delta_trans)
+            left = T_base_ee_delta_trans + T_ee_d435detph_delta_trans
+            right = T_base_d435depth_delta_trans
 
-            trans_x_list.append(T_ee_d435detph_delta_trans[0])
-            trans_y_list.append(T_ee_d435detph_delta_trans[1])
-            trans_z_list.append(T_ee_d435detph_delta_trans[2])
+            error = abs(left - right)
+            print("Error: ", error)
+            error_x_list.append(error[0])
+            error_y_list.append(error[1])
+            error_z_list.append(error[2])
+
 
             self.go_sp()
         
-        trans_x_mean = np.mean(trans_x_list)
-        trans_y_mean = np.mean(trans_y_list)
-        trans_z_mean = np.mean(trans_z_list)
-        print("trans x mean: ", trans_x_mean)
-        print("trans y mean: ", trans_y_mean)
-        print("trans z mean: ", trans_z_mean)
-        # trans x mean:  -1.1102230246251566e-17
-        # trans y mean:  -6.661338147750939e-17
-        # trans z mean:  4.85722573273506e-17
+        error_x_mean = np.mean(error_x_list)
+        error_y_mean = np.mean(error_y_list)
+        error_z_mean = np.mean(error_z_list)
+        print("Error X Mean: ", error_x_mean)
+        print("Error Y Mean: ", error_y_mean)
+        print("Error Z Mean: ", error_z_mean)
+        # Error X Mean:  0.001878890048088433
+        # Error Y Mean:  0.00033492874193615516
+        # Error Z Mean:  0.001287196205348623
         
 
 
@@ -205,9 +213,9 @@ class GraspPlannerNode():
     ####### Grasp Planning #######
 
     def go_sp(self):
-        self.arm_group.set_joint_value_target([-0.08498747219394814, -0.2794001977631106,
-                                               0.7484180883797364, -1.570090066123494,
-                                               -2.114137663337607, -1.6563429070772748])
+        self.arm_group.set_joint_value_target([0.02754534147079857, -0.3292162455300689, 
+                                               0.6239125970105316, -1.5710093796821027, 
+                                               -2.1819422621718063, -1.6193681240201974])
         self.arm_group.go(wait=True)
 
     def grasp_obj(self):
