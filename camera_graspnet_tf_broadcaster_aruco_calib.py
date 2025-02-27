@@ -321,12 +321,14 @@ class CameraTFBroadcaster:
         while not rospy.is_shutdown():
             try:
                 # Get transformation from base_link to end_effector_link
-                (trans_d435color_d435depth, rot_d435color_d435depth) = self.listener.lookupTransform('/d435_color_optical_frame', '/d435_depth_optical_frame', rospy.Time(0))
+                (trans_d435color_d435depth, _) = self.listener.lookupTransform('/d435_color_optical_frame', '/d435_depth_optical_frame', rospy.Time(0))
                 break
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 continue
+
+        rot_identity = np.eye(3)
              
-        T_d435color_d435depth = self.construct_rot_matrix_homogeneous_transform(trans_d435color_d435depth, rot_d435color_d435depth)
+        T_d435color_d435depth = self.construct_homogeneous_transform(trans_d435color_d435depth, rot_identity)
 
         return T_d435color_d435depth
 
