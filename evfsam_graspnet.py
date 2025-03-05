@@ -27,18 +27,18 @@ else:
     print("CUDA is not available. Using CPU.")
  
 import sys
-sys.path.append('/home/chart-admin/graspnet/graspnet-baseline/models')
+sys.path.append('/home/sandisk/koyo_ws/graspnet-baseline/models')
 # sys.path.append('/home/koyo/graspnet-baseline/models')
 from graspnet import GraspNet, pred_decode
 from collision_detector import ModelFreeCollisionDetector
 from data_utils import CameraInfo, create_point_cloud_from_depth_image
  
-sys.path.append("/home/chart-admin/graspnet/graspnetAPI")
+sys.path.append("/home/sandisk/koyo_ws/graspnetAPI")
 # sys.path.append("/home/koyo/graspnetAPI")
 from graspnetAPI import GraspGroup
 from graspnet import GraspNet, pred_decode
  
-sys.path.append("/home/chart-admin/graspnet/graspnet-baseline/dataset")
+sys.path.append("/home/sandisk/koyo_ws/graspnet-baseline/dataset")
 # sys.path.append("/home/koyo/graspnet-baseline/dataset")
 from graspnet_dataset import GraspNetDataset
 from collision_detector import ModelFreeCollisionDetector
@@ -57,7 +57,7 @@ BROKER_ADDRESS = "172.22.247.109"
 BROKER_PORT = 15672
 
 # Define the server URL
-url = "http://172.22.247.138:8000/predict"  # Note the '/predict' endpoint
+url = "http://100.106.58.3:8000/predict"  # Note the '/predict' endpoint
 
 
 class EVFsamGraspnet():
@@ -73,7 +73,7 @@ class EVFsamGraspnet():
  
     def init_params(self):
         # Graspnet params
-        self.checkpoint_path = "/home/chart-admin/graspnet/graspnet-baseline/checkpoint-rs.tar"
+        self.checkpoint_path = "/home/sandisk/koyo_ws/graspnet-baseline/checkpoint-rs.tar"
         self.num_point = 20000
         self.num_view = 300
         self.collision_thresh = 0.01
@@ -101,9 +101,9 @@ class EVFsamGraspnet():
         self.display_count = 0
         self.display_itr = 5
  
-        self.gg_file_path = '/home/chart-admin/koyo_ws/langsam_grasp_ws/src/demo_pkg_v2/src/data/gg_values.txt'
+        self.gg_file_path = '/home/sandisk/koyo_ws/demo_ws/src/demo_pkg/evfsam_graspnet_demo/data/gg_values.txt'
  
-        self.data_path = '/home/chart-admin/catkin_workspace/data'
+        self.data_path = '/home/sandisk/koyo_ws/demo_ws/src/demo_pkg/evfsam_graspnet_demo/data'
  
 
     def start_demo(self):
@@ -410,7 +410,7 @@ class EVFsamGraspnet():
         gg.nms()
         gg.sort_by_score()
         top_grasp = gg[0]  # Select the highest-scoring grasp.
-        # print("top grasp: ", top_grasp)
+        print("top grasp: ", top_grasp)
         top_grasp_str = str(top_grasp)
  
         prompt_str = str(self.prompt)
@@ -434,6 +434,7 @@ class EVFsamGraspnet():
  
  
         gg = gg[:1]
+        print("gg: ", gg)
         grippers = gg.to_open3d_geometry_list()
         o3d.visualization.draw_geometries([cloud, *grippers])
  

@@ -6,14 +6,13 @@ import tf
 from geometry_msgs.msg import Pose
 import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
-import cv2
 
 SET_START = 0
 DEBUG_OBJ = 1
 
 class GraspPlannerNode():
     def __init__(self):
-        self.filepath = "/home/chart-admin/koyo_ws/langsam_grasp_ws/src/demo_pkg_v2/src/data/gg_values.txt"
+        self.filepath = "/home/sandisk/koyo_ws/demo_ws/src/demo_pkg/evfsam_graspnet_demo/data/gg_values.txt"
         # self.filepath = "/home/ubuntu/catkin_workspace/src/demo_pkg/data/gg_values.txt"
         self.listener = tf.TransformListener()
         if DEBUG_OBJ:
@@ -76,6 +75,8 @@ class GraspPlannerNode():
         else:
             rospy.loginfo("Processing GraspNet output")
             self.process_graspnet_output()
+            rospy.loginfo("Moving to start position")
+            self.go_sp()
             rospy.loginfo("Starting grasp planning...")
             self.execute_grasp_sequence()
 
@@ -277,7 +278,7 @@ class GraspPlannerNode():
         self.gripper_width = self.read_gripper_width(self.filepath)
         print("Gripper Width:\n", self.gripper_width)
 
-        breakpoint()
+        # breakpoint()
 
 
     ####### Grasp Planning #######
@@ -292,6 +293,9 @@ class GraspPlannerNode():
         """
         Grasp object based on object detection.
         """
+
+        # self.target_pos.position.x -= 0.055
+        self.target_pos.position.z -= 0.0175
 
         # self.target_pos.position.z += 0.05
         # self.target_pos.position.x += 0.125
