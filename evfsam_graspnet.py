@@ -90,7 +90,7 @@ class EVFsamGraspnet():
         # self.load_in_4bit = False
         # self.model_type = "ori" # "ori", "effi", "sam2"
         # self.image_path = "assets/zebra.jpg"
-        self.prompt = "pick up a banana"
+        self.prompt = "pick yellow pole"
         # self.prompt = "pick up a blue cup"
 
         self.image_w = 1280
@@ -135,8 +135,19 @@ class EVFsamGraspnet():
         config = rs.config()
         config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
         config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+        
         try:
-            pipeline.start(config)
+            # pipeline.start(config)
+            # Start streaming
+            pipeline_profile = pipeline.start(config)
+            # Get camera intrinsics
+            profile = pipeline_profile.get_stream(rs.stream.color)
+            intrinsics = profile.as_video_stream_profile().get_intrinsics()
+            camMatrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+                                [0, intrinsics.fy, intrinsics.ppy],
+                                [0, 0, 1]])
+            distCoeffs = np.zeros(5)  # Assuming no lens distortion
+
             print("Streaming started. Press 'q' to quit.")
             save_dir = "image_files"
             os.makedirs(save_dir, exist_ok=True)
@@ -156,6 +167,10 @@ class EVFsamGraspnet():
                 # Convert RealSense frames to numpy arrays
                 color_image = np.asanyarray(color_frame.get_data())
                 depth_image = np.asanyarray(depth_frame.get_data())
+
+                # Flip the images horizontally (left-to-right) and vertically (up-to-down)
+                color_image = cv2.flip(color_image, -1)  # Flip both horizontally and vertically
+                depth_image = cv2.flip(depth_image, -1)  # Flip both horizontally and vertically
 
                 # Normalize depth image for display
                 depth_display_image = cv2.convertScaleAbs(depth_image, alpha=0.03)
@@ -257,6 +272,7 @@ class EVFsamGraspnet():
             self.color_image = color_image
             self.depth_image = depth_image
             self.xmin, self.ymin, self.xmax, self.ymax = xmin, ymin, xmax, ymax
+            self.intrinsics = intrinsics
 
             cv2.destroyAllWindows()
     
@@ -271,27 +287,74 @@ class EVFsamGraspnet():
  
         net = self.get_net()
         # end_points, cloud = self.get_and_process_data(data_dir)
-        end_points, cloud, depth, intrinsic, factor_depth = self.get_and_process_data(data_dir)
+        # end_points, cloud, depth, intrinsic, factor_depth = self.get_and_process_data(data_dir)
+        end_points, cloud, depth, intrinsic, factor_depth = self.get_filter_process_data(data_dir)
         
-        # Extract bounding box coordinates in 3D.
-        # xmin, ymin, xmax, ymax = map(int, [obj['xmin'], obj['ymin'], obj['xmax'], obj['ymax']])
+        # # Extract bounding box coordinates in 3D.
+        # xmin, ymin, xmax, ymax = self.xmin, self.ymin, self.xmax, self.ymax
+        # xmin_3d_x, xmin_3d_y = self.pixel_to_camera_coords(xmin, ymin, depth, intrinsic, factor_depth)
+        # xmax_3d_x, xmax_3d_y = self.pixel_to_camera_coords(xmax, ymax, depth, intrinsic, factor_depth)
+        # print("xmin_3d_x: ", xmin_3d_x)
+        # print("xmin_3d_y: ", xmin_3d_y)
+        # print("xmax_3d_x: ", xmax_3d_x)
+        # print("xmax_3d_y: ", xmax_3d_y)
+
+        # Extract 2D bounding box coordinates
         xmin, ymin, xmax, ymax = self.xmin, self.ymin, self.xmax, self.ymax
-        xmin_3d_x, xmin_3d_y = self.pixel_to_camera_coords_xy(xmin, ymin, depth, intrinsic, factor_depth)
-        xmax_3d_x, xmax_3d_y = self.pixel_to_camera_coords_xy(xmax, ymax, depth, intrinsic, factor_depth)
-        print("xmin_3d_x: ", xmin_3d_x)
-        print("xmin_3d_y: ", xmin_3d_y)
-        print("xmax_3d_x: ", xmax_3d_x)
-        print("xmax_3d_y: ", xmax_3d_y)
+
+        print("Top-left in camera: ", (xmin, ymin))
+        print("Top-right in camera: ", (xmax, ymin))
+        print("Bottom-left in camera: ", (xmin, ymax))
+        print("Bottom-right in camera: ", (xmax, ymax))
+        # print("xmin: ", xmin)
+        # print("ymin: ", ymin)
+        # print("xmax: ", xmax)
+        # print("ymax: ", ymax)
+
+        # Convert all 4 corners to 3D coordinates
+        xmin_ymin_3d = self.pixel_to_camera_coords(xmin, ymin, depth, intrinsic, factor_depth)  # Top-left
+        xmax_ymin_3d = self.pixel_to_camera_coords(xmax, ymin, depth, intrinsic, factor_depth)  # Top-right
+        xmin_ymax_3d = self.pixel_to_camera_coords(xmin, ymax, depth, intrinsic, factor_depth)  # Bottom-left
+        xmax_ymax_3d = self.pixel_to_camera_coords(xmax, ymax, depth, intrinsic, factor_depth)  # Bottom-right
+
+        print("Top-left in 3d: ", xmin_ymin_3d)
+        print("Top-right in 3d: ", xmax_ymin_3d)
+        print("Bottom-left in 3d: ", xmin_ymax_3d)
+        print("Bottom-right in 3d: ", xmax_ymax_3d)
+        # breakpoint()
 
         # Generate and filter grasps.
         gg = self.get_grasps(net, end_points)
         print("Original gg: ", gg)
         filtered_gg = GraspGroup()
+
+        # for grasp in gg:
+        #     translation = grasp.translation
+        #     # if (xmin_3d_x - 0.1  <= translation[0] <= xmax_3d_x + 0.1 and
+        #     #     xmin_3d_y - 0.1 <= translation[1] <= xmax_3d_y + 0.1):
+        #     if (xmin_3d_x  <= translation[0] <= xmax_3d_x  and
+        #         xmin_3d_y  <= translation[1] <= xmax_3d_y ):
+        #         filtered_gg.add(grasp)
+
+        # # Check if grasp points are within the 3D bounding box
+        # for grasp in gg:
+        #     translation = grasp.translation
+        #     if (min(xmin_ymin_3d[0], xmax_ymin_3d[0], xmin_ymax_3d[0], xmax_ymax_3d[0]) <= translation[0] <= max(xmin_ymin_3d[0], xmax_ymin_3d[0], xmin_ymax_3d[0], xmax_ymax_3d[0]) and
+        #         min(xmin_ymin_3d[1], xmax_ymin_3d[1], xmin_ymax_3d[1], xmax_ymax_3d[1]) <= translation[1] <= max(xmin_ymin_3d[1], xmax_ymin_3d[1], xmin_ymax_3d[1], xmax_ymax_3d[1])):
+        #         filtered_gg.add(grasp)
+
+        margin = 0.05  # Define a margin of 2 cm
+
+        min_x = min(xmin_ymin_3d[0], xmax_ymin_3d[0], xmin_ymax_3d[0], xmax_ymax_3d[0]) - margin
+        max_x = max(xmin_ymin_3d[0], xmax_ymin_3d[0], xmin_ymax_3d[0], xmax_ymax_3d[0]) + margin
+        min_y = min(xmin_ymin_3d[1], xmax_ymin_3d[1], xmin_ymax_3d[1], xmax_ymax_3d[1]) - margin
+        max_y = max(xmin_ymin_3d[1], xmax_ymin_3d[1], xmin_ymax_3d[1], xmax_ymax_3d[1]) + margin
+
         for grasp in gg:
             translation = grasp.translation
-            if (xmin_3d_x - 0.1  <= translation[0] <= xmax_3d_x + 0.1 and
-                xmin_3d_y - 0.1 <= translation[1] <= xmax_3d_y + 0.1):
+            if (min_x <= translation[0] <= max_x and min_y <= translation[1] <= max_y):
                 filtered_gg.add(grasp)
+
 
         # Perform collision detection if needed.
         if self.collision_thresh > 0:
@@ -338,12 +401,23 @@ class EVFsamGraspnet():
         intrinsic = meta['intrinsic_matrix']
         factor_depth = meta['factor_depth']
  
-        # Manually update intrinsic parameters (overriding values from metadata).
-        intrinsic[0][0] = 636.4911
-        intrinsic[1][1] = 636.4911
-        intrinsic[0][2] = 642.3791
-        intrinsic[1][2] = 357.4644
-        factor_depth = 1000  # Set depth scaling factor for the camera.
+        # # Manually update intrinsic parameters (overriding values from metadata).
+        # intrinsic[0][0] = 636.4911
+        # intrinsic[1][1] = 636.4911
+        # intrinsic[0][2] = 642.3791
+        # intrinsic[1][2] = 357.4644
+        # factor_depth = 1000  # Set depth scaling factor for the camera.
+
+        # print(self.intrinsics.fx)
+        # print(self.intrinsics.fy)
+        # print(self.intrinsics.ppx)
+        # print(self.intrinsics.ppy)
+        intrinsic[0][0] = self.intrinsics.fx
+        intrinsic[1][1] = self.intrinsics.fy
+        intrinsic[0][2] = self.intrinsics.ppx
+        intrinsic[1][2] = self.intrinsics.ppy
+        factor_depth = 1000  # Set depth scaling factor for the camera
+        # breakpoint()
  
         # generate cloud
         camera = CameraInfo(self.image_w, self.image_h, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2], factor_depth)
@@ -378,13 +452,105 @@ class EVFsamGraspnet():
  
         # return end_points, cloud
         return end_points, cloud, depth, intrinsic, factor_depth
- 
-    # Function to convert pixel coordinates to camera coordinates
-    def pixel_to_camera_coords_xy(self, x, y, depth, intrinsic, factor_depth):
-        Z = depth[y, x] / factor_depth  # Compute the depth value
-        X = (x - intrinsic[0][2]) * Z / intrinsic[0][0]  # Compute X in camera coordinates
-        Y = (y - intrinsic[1][2]) * Z / intrinsic[1][1]  # Compute Y in camera coordinates
-        return X, Y
+
+    def get_filter_process_data(self, data_dir):
+        # Load data
+        color = self.color_image
+        depth = self.depth_image
+        workspace_mask = np.array(Image.open(os.path.join(data_dir, 'workspace_mask.png')))
+
+        meta = scio.loadmat(os.path.join(data_dir, 'meta.mat'))
+        intrinsic = meta['intrinsic_matrix']
+        factor_depth = meta['factor_depth']
+
+        # Update intrinsic parameters
+        intrinsic[0][0] = self.intrinsics.fx
+        intrinsic[1][1] = self.intrinsics.fy
+        intrinsic[0][2] = self.intrinsics.ppx
+        intrinsic[1][2] = self.intrinsics.ppy
+        factor_depth = 1000  # Ensure depth scaling factor is correct
+
+        # Apply depth threshold to remove noise
+        min_depth = 0.2  # Minimum depth (20 cm)
+        max_depth = 0.8  # Maximum depth (1.5 m)
+        depth[depth < min_depth * factor_depth] = 0
+        depth[depth > max_depth * factor_depth] = 0
+
+        # Generate point cloud
+        camera = CameraInfo(self.image_w, self.image_h, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2], factor_depth)
+        cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
+
+        # Apply workspace mask
+        mask = (workspace_mask & (depth > 0))
+        cloud_masked = cloud[mask]
+        color_masked = color[mask]
+
+        # Convert masked point cloud to Open3D format
+        cloud_o3d = o3d.geometry.PointCloud()
+        cloud_o3d.points = o3d.utility.Vector3dVector(cloud_masked.astype(np.float32))
+        cloud_o3d.colors = o3d.utility.Vector3dVector(color_masked.astype(np.float32))
+
+        # Apply pass-through filter (limit to a specific region of interest)
+        min_x, max_x = -0.5, 0.5
+        min_y, max_y = -0.5, 0.5
+        min_z, max_z = min_depth, max_depth
+        filtered_points = []
+        for point in np.asarray(cloud_o3d.points):
+            if min_x <= point[0] <= max_x and min_y <= point[1] <= max_y and min_z <= point[2] <= max_z:
+                filtered_points.append(point)
+        cloud_o3d.points = o3d.utility.Vector3dVector(np.array(filtered_points))
+
+        # # Apply voxel grid filter for downsampling
+        # voxel_size = 0.01  # 1 cm voxel grid
+        # cloud_o3d = cloud_o3d.voxel_down_sample(voxel_size=voxel_size)
+
+        # # Remove statistical outliers to clean up the point cloud
+        # cl, ind = cloud_o3d.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        # cloud_o3d = cloud_o3d.select_by_index(ind)
+
+        # # Optional: Visualize the filtered point cloud
+        # o3d.visualization.draw_geometries([cloud_o3d], window_name="Filtered Point Cloud")
+
+        # Sample points from the filtered point cloud
+        cloud_masked = np.asarray(cloud_o3d.points)
+        color_masked = np.asarray(cloud_o3d.colors)
+
+        if len(cloud_masked) >= self.num_point:
+            idxs = np.random.choice(len(cloud_masked), self.num_point, replace=False)
+        else:
+            idxs1 = np.arange(len(cloud_masked))
+            idxs2 = np.random.choice(len(cloud_masked), self.num_point - len(cloud_masked), replace=True)
+            idxs = np.concatenate([idxs1, idxs2], axis=0)
+        cloud_sampled = cloud_masked[idxs]
+        color_sampled = color_masked[idxs]
+
+        # Convert data to tensors
+        end_points = dict()
+        cloud_sampled = torch.from_numpy(cloud_sampled[np.newaxis].astype(np.float32))
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cloud_sampled = cloud_sampled.to(device)
+        end_points['point_clouds'] = cloud_sampled
+        end_points['cloud_colors'] = color_sampled
+
+
+        # Return processed data
+        return end_points, cloud_o3d, depth, intrinsic, factor_depth
+
+    
+    # def pixel_to_camera_coords(self, x, y, depth, intrinsic, factor_depth):
+    #     Z = depth[y, x] / factor_depth  # Compute the depth value
+    #     X = (x - intrinsic[0][2]) * Z / intrinsic[0][0]  # Compute X in camera coordinates
+    #     Y = (y - intrinsic[1][2]) * Z / intrinsic[1][1]  # Compute Y in camera coordinates
+    #     return X, Y, Z  # Include Z in the return statement
+
+    def pixel_to_camera_coords(self, x, y, depth, intrinsic, factor_depth):
+        Z = depth[y, x] / factor_depth  # Depth (distance from camera)
+        X = (x - intrinsic[0][2]) * Z / intrinsic[0][0]  # X in camera coordinates
+        Y = (y - intrinsic[1][2]) * Z / intrinsic[1][1] 
+        # Y = -(y - intrinsic[1][2]) * Z / intrinsic[1][1]  # Invert Y to increase upwards
+        return X, Y, Z
+
+
 
     def get_grasps(self, net, end_points):
         # Forward pass

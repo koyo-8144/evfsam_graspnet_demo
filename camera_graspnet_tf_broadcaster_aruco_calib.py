@@ -229,8 +229,8 @@ class CameraTFBroadcaster:
 
         # --- Get EE to Graspnet ---
         trans_zero = np.zeros(3)
-        rot_z_90 = self.rotation_matrix_z(90)
-        T_camera_depth_graspnet = self.construct_homogeneous_transform(trans_zero, rot_z_90)
+        rot_z_270 = self.rotation_matrix_z(270)
+        T_camera_depth_graspnet = self.construct_homogeneous_transform(trans_zero, rot_z_270)
         print("Transformation Matrix (camera_depth to graspnet):\n", T_camera_depth_graspnet)
 
         T_ee_graspnet = T_ee_camera_depth @ T_camera_depth_graspnet
@@ -409,12 +409,13 @@ class CameraTFBroadcaster:
         print("Transformation Matrix (ee to camera_depth):\n", T_ee_camera_depth)
 
         # --- Get EE to Graspnet ---
-        trans_zero = np.zeros(3)
-        rot_z_90 = self.rotation_matrix_z(90)
-        T_camera_depth_graspnet = self.construct_homogeneous_transform(trans_zero, rot_z_90)
-        print("Transformation Matrix (camera_depth to graspnet):\n", T_camera_depth_graspnet)
+        # trans_zero = np.zeros(3)
+        # rot_z_270 = self.rotation_matrix_z(270)
+        # T_camera_depth_graspnet = self.construct_homogeneous_transform(trans_zero, rot_z_270)
+        # print("Transformation Matrix (camera_depth to graspnet):\n", T_camera_depth_graspnet)
 
-        T_ee_graspnet = T_ee_camera_depth @ T_camera_depth_graspnet
+        # T_ee_graspnet = T_ee_camera_depth @ T_camera_depth_graspnet
+        T_ee_graspnet = T_ee_camera_depth
         print("Transformation Matrix (ee to graspnet):\n", T_ee_graspnet)
 
 

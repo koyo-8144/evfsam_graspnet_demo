@@ -8,7 +8,7 @@ import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
 
 SET_START = 0
-DEBUG_OBJ = 1
+DEBUG_OBJ = 0
 
 class GraspPlannerNode():
     def __init__(self):
@@ -33,8 +33,12 @@ class GraspPlannerNode():
         )
 
         # Set robot arm's speed and acceleration
-        self.arm_group.set_max_acceleration_scaling_factor(1)
-        self.arm_group.set_max_velocity_scaling_factor(1)
+        self.arm_group.set_max_acceleration_scaling_factor(1.0)  # 50% of max acceleration
+        self.arm_group.set_max_velocity_scaling_factor(1.0)      # 50% of max velocity
+        self.arm_group.set_planning_time(15.0)  # Increase to 15 seconds for complex paths
+        self.arm_group.allow_replanning(True)
+
+
 
         # We can get the name of the reference frame for this robot:
         planning_frame = self.arm_group.get_planning_frame()
@@ -181,6 +185,18 @@ class GraspPlannerNode():
 
         return T_base_camera_color
     
+    def get_base_to_graspnet(self):
+        while not rospy.is_shutdown():
+            try:
+                (trans_base_graspnet, rot_base_graspnet) = self.listener.lookupTransform('/base_link', '/graspnet', rospy.Time(0))
+                break
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+        
+        T_base_graspnet = self.construct_rot_matrix_homogeneous_transform(trans_base_graspnet, rot_base_graspnet)
+
+        return T_base_graspnet
+    
     def get_camera_color_to_camera_depth(self):
         while not rospy.is_shutdown():
             try:
@@ -205,6 +221,61 @@ class GraspPlannerNode():
 
         return T_camera_depth_graspnet
     
+    def replace_rotation_with_identity(self, T):
+        """
+        Replaces the rotation part of a 4x4 transformation matrix with an identity matrix.
+
+        Args:
+        - T (numpy.ndarray): A 4x4 transformation matrix.
+
+        Returns:
+        - numpy.ndarray: A modified 4x4 transformation matrix with an identity rotation.
+        """
+        # Check if the input is a 4x4 matrix
+        if T.shape != (4, 4):
+            raise ValueError("Input matrix must be 4x4.")
+
+        # Create a copy to avoid modifying the original matrix
+        T_new = T.copy()
+
+        # Replace the rotation part (top-left 3x3) with an identity matrix
+        T_new[:3, :3] = np.eye(3)
+
+        # Return the modified matrix
+        return T_new
+
+    def replace_orientation_with_tilt(self, transform_matrix, tilt_angle=0):
+        """
+        Replace the orientation of a 4x4 transformation matrix with a simple tilt around the Z-axis.
+
+        Args:
+            transform_matrix (np.ndarray): The original 4x4 transformation matrix.
+            tilt_angle (float): The tilt angle in degrees (default: 45°).
+
+        Returns:
+            np.ndarray: Modified 4x4 transformation matrix with the new orientation.
+        """
+        # Convert tilt angle from degrees to radians
+        tilt_radians = np.radians(tilt_angle)
+
+        # Create a new rotation matrix for a tilt around the Z-axis
+        rotation_matrix_tilt = np.array([
+            [np.cos(tilt_radians), -np.sin(tilt_radians), 0],
+            [np.sin(tilt_radians),  np.cos(tilt_radians), 0],
+            [0,                    0,                     1]
+        ])
+
+        # Extract the translation part from the original matrix
+        translation = transform_matrix[:3, 3]
+
+        # Create a new 4x4 transformation matrix
+        new_transform = np.identity(4)
+        new_transform[:3, :3] = rotation_matrix_tilt  # Replace rotation part
+        new_transform[:3, 3] = translation            # Keep translation part
+
+        return new_transform
+
+
     def transformation_to_pose(self, T_base_obj):
         # Extract translation (position)
         translation = T_base_obj[:3, 3]  # [x, y, z]
@@ -240,33 +311,22 @@ class GraspPlannerNode():
         return width
 
     def process_graspnet_output(self):
-        # --- Get Base to Camera Color ---
-        T_base_camera_color = self.get_base_to_camera_color()
-        print("Transformation Matrix (base to camera_color):\n", T_base_camera_color)
-
-
-        # --- Camera Color to Obj ---
-        T_camera_color_camera_depth = self.get_camera_color_to_camera_depth()
-        print("Transformation Matrix (camera_color to camera_depth):\n", T_camera_color_camera_depth)
-
-        T_camera_depth_graspnet = self.get_camera_depth_to_graspnet()
-        print("Transformation Matrix (camera_depth to graspnet):\n", T_camera_depth_graspnet)
-
+        # --- Process Graspnet output---
         poses = self.read_gg_values(self.filepath)
         trans_graspnet = poses["translation"]
         rot_graspnet = poses["rotation"]
-        # print("trans: ", trans_graspnet)
-        # print("rot: ", rot_graspnet)
+        print("trans: ", trans_graspnet)
+        print("rot: ", rot_graspnet)
         T_graspnet_obj = self.construct_homogeneous_transform(trans_graspnet, rot_graspnet)
         print("Transformation Matrix (graspnet to obj):\n", T_graspnet_obj)
 
-        T_camera_color_obj = T_camera_color_camera_depth @ T_camera_depth_graspnet @ T_graspnet_obj
-        print("Transformation Matrix (camera_color to obj):\n", T_camera_color_obj)
-
-
         # --- Get Base to Obj ---
-        T_base_obj = T_base_camera_color @ T_camera_color_obj
+        T_base_graspnet = self.get_base_to_graspnet()
+        T_base_obj = T_base_graspnet @ T_graspnet_obj
         print("Transformation Matrix (base to obj):\n", T_base_obj)
+
+        T_base_obj_new = self.replace_orientation_with_tilt(T_base_obj)
+        print("Transformation Matrix (base to objj new):\n", T_base_obj_new)
 
         if DEBUG_OBJ:
             print("Debug Object")
@@ -294,51 +354,52 @@ class GraspPlannerNode():
         Grasp object based on object detection.
         """
 
-        # self.target_pos.position.x -= 0.055
-        self.target_pos.position.z -= 0.0175
+        # self.target_pos.position.z -= 0.0175
 
-        # self.target_pos.position.z += 0.05
-        # self.target_pos.position.x += 0.125
-        # self.target_pos.position.y -= 0.2
-        # self.target_pos.position.x += 0.1
-        # self.target_pos.position.y -= 0.15
-        # self.target_pos.position.x += 0.075
-        # self.target_pos.position.y += 0.075
+        print("Planning motion .....")
         self.arm_group.set_pose_target(self.target_pos)
         self.arm_group.go()
+
         # self.plan_cartesian_path(self.target_pos)
         # self.target_pos.position.z += 0.05
         # self.plan_cartesian_path(self.target_pos)
         # self.arm_group.set_pose_target(self.target_pos)
         # self.arm_group.go()
 
+
     def plan_cartesian_path(self, target_pose):
         """
         Cartesian path planning
         """
         waypoints = []
-        waypoints.append(target_pose)  # Add the pose to the list of waypoints
+
+        # Create intermediate waypoints for smoother path
+        current_pose = self.arm_group.get_current_pose().pose
+        waypoints.append(current_pose)  # Start from the current pose
+        waypoints.append(target_pose)   # Move to the target pose
 
         # Set robot arm's current state as start state
         self.arm_group.set_start_state_to_current_state()
 
         try:
-            # Compute trajectory
+            # Compute trajectory with updated parameters
             (plan, fraction) = self.arm_group.compute_cartesian_path(
-                waypoints,   # List of waypoints
-                0.01,        # eef_step (endpoint step)
-                0.0,         # jump_threshold
-                False        # avoid_collisions
+                waypoints,          # List of waypoints
+                0.02,               # eef_step: Increase for faster planning (was 0.01)
+                0.1,                # jump_threshold: Allow small jumps (was 0.0)
+                # avoid_collisions=True  # Enable collision avoidance
             )
 
             if fraction < 1.0:
                 rospy.logwarn("Cartesian path planning incomplete. Fraction: %f", fraction)
 
-            # Execute the plan
-            if plan:
+            # Execute the plan if it is valid
+            if plan and len(plan.joint_trajectory.points) > 0:
+                rospy.loginfo("Executing Cartesian path...")
                 self.arm_group.execute(plan, wait=True)
             else:
                 rospy.logerr("Failed to compute Cartesian path")
+
         except Exception as e:
             rospy.logerr("Error in Cartesian path planning: %s", str(e))
 
