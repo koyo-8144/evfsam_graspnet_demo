@@ -7,14 +7,27 @@ from geometry_msgs.msg import Pose
 import tf.transformations as tf_trans
 from sensor_msgs.msg import  JointState
 
-from moveit_msgs.srv import GetPositionIK, GetPositionIKRequest
-from moveit_msgs.msg import RobotState
-from geometry_msgs.msg import PoseStamped
+import sys
+import os
+import time
+import threading
+
+sys.path.append("")
+from kortex_api.autogen.client_stubs.BaseClientRpc import BaseClient
+from kortex_api.autogen.client_stubs.BaseCyclicClientRpc import BaseCyclicClient
+
+from kortex_api.autogen.messages import Base_pb2, BaseCyclic_pb2, Common_pb2
+
+sys.path.append("/home/sandisk/koyo_ws/demo_ws/src/Kinova-kortex2_Gen3_G3L/api_python/examples")
+import utilities
+
+# Maximum allowed waiting time during actions (in seconds)
+TIMEOUT_DURATION = 20
 
 SET_START = 0
 DEBUG_OBJ = 0
 
-class GraspPlannerNode():
+class GraspAPIPlannerNode():
     def __init__(self):
         self.filepath = "/home/sandisk/koyo_ws/demo_ws/src/demo_pkg/evfsam_graspnet_demo/data/gg_values.txt"
         # self.filepath = "/home/ubuntu/catkin_workspace/src/demo_pkg/data/gg_values.txt"
@@ -40,8 +53,7 @@ class GraspPlannerNode():
         self.arm_group.set_max_acceleration_scaling_factor(1.0)  # 50% of max acceleration
         self.arm_group.set_max_velocity_scaling_factor(1.0)      # 50% of max velocity
         self.arm_group.set_planning_time(15.0)  # Increase to 15 seconds for complex paths
-        # self.arm_group.allow_replanning(True)
-        self.arm_group.clear_path_constraints()
+        self.arm_group.allow_replanning(True)
 
 
 
@@ -345,61 +357,6 @@ class GraspPlannerNode():
 
         # breakpoint()
 
-    def get_ik_solution(self, target_pose):
-        """
-        Calls the /my_gen3_lite/compute_ik service to get joint positions for a given end-effector pose.
-
-        Args:
-            target_pose (Pose): The desired end-effector pose (position and orientation).
-
-        Returns:
-            list: Joint positions if a solution is found, None otherwise.
-        """
-        # Wait for the service to be available
-        rospy.wait_for_service('/my_gen3_lite/compute_ik')
-
-        try:
-            # Create a service proxy
-            compute_ik = rospy.ServiceProxy('/my_gen3_lite/compute_ik', GetPositionIK)
-
-            # Prepare the IK request
-            ik_request = GetPositionIKRequest()
-            ik_request.ik_request.group_name = "arm"
-            ik_request.ik_request.timeout = rospy.Duration(5.0)
-            ik_request.ik_request.avoid_collisions = True
-
-            # Prepare robot state with current joint states
-            current_state = self.robot.get_current_state()
-            ik_request.ik_request.robot_state = current_state
-
-            # Define the target pose
-            pose_stamped = PoseStamped()
-            pose_stamped.header.frame_id = "base_link"
-            pose_stamped.pose = target_pose
-            ik_request.ik_request.pose_stamped = pose_stamped
-            ik_request.ik_request.ik_link_name = "tool_frame" # self.arm_group.get_end_effector_link()
-
-            # Call the IK service
-            response = compute_ik(ik_request)
-
-            # Check if a solution was found
-            if response.error_code.val == 1:
-                joint_positions = response.solution.joint_state.position
-                joint_names = response.solution.joint_state.name
-                print("IK solution found:")
-                for name, pos in zip(joint_names, joint_positions):
-                    print(f"{name}: {pos}")
-                return joint_positions
-            else:
-                rospy.logerr("Failed to find IK solution.")
-                return None
-
-        except rospy.ServiceException as e:
-            rospy.logerr(f"Service call failed: {e}")
-            return None
-
-      
-
 
     ####### Grasp Planning #######
 
@@ -408,25 +365,109 @@ class GraspPlannerNode():
                                                0.6239125970105316, -1.5710093796821027, 
                                                -2.1819422621718063, -1.6193681240201974])
         self.arm_group.go(wait=True)
+    
+    # Create closure to set an event after an END or an ABORT
+    def check_for_end_or_abort(self, e):
+        """Return a closure checking for END or ABORT notifications
+
+        Arguments:
+        e -- event to signal when the action is completed
+            (will be set when an END or ABORT occurs)
+        """
+        def check(notification, e = e):
+            print("EVENT : " + \
+                Base_pb2.ActionEvent.Name(notification.action_event))
+            if notification.action_event == Base_pb2.ACTION_END \
+            or notification.action_event == Base_pb2.ACTION_ABORT:
+                e.set()
+        return check
 
     def grasp_obj(self):
         """
-        Grasp object based on object detection.
+        Grasp object based on object detection using Kortex API for Cartesian movement.
+        Stops ROS before executing Kortex API commands.
         """
+        print("Stopping ROS to execute Kortex API commands...")
+        rospy.signal_shutdown("Shutting down ROS for Kortex API compatibility.")
+        time.sleep(2)  # Wait for ROS to shut down completely
 
-        # self.target_pos.position.z -= 0.0175
+        print("Starting Cartesian action movement with Kortex API...")
 
-        # print("Planning motion .....")
-        # self.arm_group.set_pose_target(self.target_pos)
-        # self.arm_group.go()
+        # Create Kortex API clients for base and cyclic control
+        args = utilities.parseConnectionArguments()
+        with utilities.DeviceConnection.createTcpConnection(args) as router:
+            base = BaseClient(router)
+            base_cyclic = BaseCyclicClient(router)
 
-        joint_positions = self.get_ik_solution(self.target_pos)
-        joint_positions = np.array(joint_positions[:6])
-        print(joint_positions)
-        self.arm_group.set_joint_value_target(joint_positions)
-        self.arm_group.go(wait=True)
+            # Create a session to take control of the arm
+            session_manager = utilities.SessionManager(router)
+            session_manager.CreateSession()  # Acquire control
 
+            try:
+                # Set the servoing mode to SINGLE_LEVEL_SERVOING
+                print("Setting servoing mode to SINGLE_LEVEL_SERVOING...")
+                servoing_mode = Base_pb2.ServoingModeInformation()
+                servoing_mode.servoing_mode = Base_pb2.SINGLE_LEVEL_SERVOING
+                base.SetServoingMode(servoing_mode)
+                print("Servoing mode set successfully.")
 
+                # Create an action for Cartesian motion
+                action = Base_pb2.Action()
+                action.name = "Grasp Object Cartesian Movement"
+                action.application_data = ""
+
+                feedback = base_cyclic.RefreshFeedback()
+
+                # Set the target position and orientation using Kortex API
+                cartesian_pose = action.reach_pose.target_pose
+                cartesian_pose.x = self.target_pos.position.x         # X position (meters)
+                cartesian_pose.y = self.target_pos.position.y         # Y position (meters)
+                cartesian_pose.z = self.target_pos.position.z         # Z position (meters)
+
+                # Extract quaternion from target pose
+                quat_x = self.target_pos.orientation.x
+                quat_y = self.target_pos.orientation.y
+                quat_z = self.target_pos.orientation.z
+                quat_w = self.target_pos.orientation.w
+
+                # Convert quaternion to Euler angles for Kortex API
+                euler = tf_trans.euler_from_quaternion([quat_x, quat_y, quat_z, quat_w])
+                cartesian_pose.theta_x = np.degrees(euler[0])  # Roll (degrees)
+                cartesian_pose.theta_y = np.degrees(euler[1])  # Pitch (degrees)
+                cartesian_pose.theta_z = np.degrees(euler[2])  # Yaw (degrees)
+
+                print(f"Target Cartesian Pose:\n X: {cartesian_pose.x}, Y: {cartesian_pose.y}, Z: {cartesian_pose.z}")
+                print(f"Orientation (degrees):\n Theta X: {cartesian_pose.theta_x}, Theta Y: {cartesian_pose.theta_y}, Theta Z: {cartesian_pose.theta_z}")
+
+                # Execute the Cartesian motion
+                e = threading.Event()
+                notification_handle = base.OnNotificationActionTopic(
+                    self.check_for_end_or_abort(e),
+                    Base_pb2.NotificationOptions()
+                )
+
+                print("Executing Cartesian action...")
+                base.ExecuteAction(action)
+
+                print("Waiting for movement to finish...")
+                finished = e.wait(TIMEOUT_DURATION)
+                base.Unsubscribe(notification_handle)
+
+                if finished:
+                    print("Cartesian movement completed successfully.")
+                else:
+                    print("Timeout on Cartesian action notification wait")
+
+            except Exception as e:
+                print(f"Error during Kortex API execution: {e}")
+            finally:
+                # Release the session after execution
+                session_manager.CloseSession()
+                print("Control released successfully.")
+
+            return finished
+
+    
     def plan_cartesian_path(self, target_pose):
         """
         Cartesian path planning
@@ -500,13 +541,13 @@ class GraspPlannerNode():
         # 1. Grasp the object
         self.grasp_obj()
 
-        # 3. Move gripper based on the grasp width
-        self.gripper_move(3.6 * self.gripper_width)
+        # # 3. Move gripper based on the grasp width
+        # self.gripper_move(3.6 * self.gripper_width)
 
-        # 4. Place the object at the target location
-        self.place_obj()
+        # # 4. Place the object at the target location
+        # self.place_obj()
         
-        self.go_sp()
+        # self.go_sp()
 
         rospy.loginfo("Grasp completed successfully.")
 
@@ -538,9 +579,9 @@ class GraspPlannerNode():
             self.rate.sleep()
 
 def main():
-    rospy.init_node('grasp_planning', anonymous=True)
-    grasp_planner_node = GraspPlannerNode()
-    grasp_planner_node.start()
+    rospy.init_node('grasp_api_planning', anonymous=True)
+    grasp_api_planner_node = GraspAPIPlannerNode()
+    grasp_api_planner_node.start()
     rospy.spin()
  
 if __name__ == "__main__":

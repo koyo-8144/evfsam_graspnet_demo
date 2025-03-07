@@ -90,7 +90,7 @@ class EVFsamGraspnet():
         # self.load_in_4bit = False
         # self.model_type = "ori" # "ori", "effi", "sam2"
         # self.image_path = "assets/zebra.jpg"
-        self.prompt = "pick yellow pole"
+        self.prompt = "pick an apple"
         # self.prompt = "pick up a blue cup"
 
         self.image_w = 1280

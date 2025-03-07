@@ -9,7 +9,7 @@ from sensor_msgs.msg import  JointState
 import cv2
 import pyrealsense2 as rs
 
-CALIBRATION = 0
+CALIBRATION = 1
 SET_START = 0
 ARUCO_VIS = 0
 
@@ -69,7 +69,7 @@ class CameraTFBroadcaster:
         if CALIBRATION or ARUCO_VIS:
             self.markerLength = 0.1325 #0.066  # 6.6 cm
             self.count = 0
-            self.count_limit = 100
+            self.count_limit = 1000
         else:
             # self.T_ee_camera_color = np.array([[-0.99999149, -0.00346816,  0.00223273,  0.0319287, ],
             #                                    [ 0.0035009,  -0.9998839,   0.01482983, -0.0723345, ],
@@ -471,6 +471,9 @@ class CameraTFBroadcaster:
                 
                 # Convert RealSense frame to NumPy array
                 frame = np.asanyarray(color_frame.get_data())
+
+                # Flip the images horizontally (left-to-right) and vertically (up-to-down)
+                frame = cv2.flip(frame, -1)  # Flip both horizontally and vertically
         
                 # Convert to grayscale
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -539,9 +542,12 @@ class CameraTFBroadcaster:
         #                                        1.4896657873467227, -1.6066813572192782, 
         #                                        -0.5534677251201918, -1.5783778137861342])
 
-        self.arm_group.set_joint_value_target([-0.06018797326800929, -1.1773499620942962, 
-                                               1.4097070387781836, -1.5753114501070167, 
-                                               -0.5708187522542758, -1.6280532249671644])
+        # self.arm_group.set_joint_value_target([-0.06018797326800929, -1.1773499620942962, 
+        #                                        1.4097070387781836, -1.5753114501070167, 
+        #                                        -0.5708187522542758, -1.6280532249671644])
+        self.arm_group.set_joint_value_target([0.021347899298075172, -1.2888863443401224,   # For ward room table
+                                               0.9295340342308258, -1.5704181579201055, 
+                                               -0.9199037774129906, -1.6257708959129662])
         self.arm_group.go(wait=True)
 
     def get_base_to_aruco(self):
